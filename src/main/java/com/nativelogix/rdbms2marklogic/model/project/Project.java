@@ -18,4 +18,5 @@ public class Project {
     Map<String, DbSchema> schemas;
     Map<String, Mapping> mappings;
     List<DiagramContainer> diagrams;
+    ProjectSettings settings;
 }
