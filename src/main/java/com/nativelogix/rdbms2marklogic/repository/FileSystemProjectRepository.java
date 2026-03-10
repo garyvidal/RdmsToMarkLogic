@@ -1,5 +1,7 @@
 package com.nativelogix.rdbms2marklogic.repository;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -24,7 +26,9 @@ public class FileSystemProjectRepository implements ProjectRepository {
     public FileSystemProjectRepository() {
         this.objectMapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())
-                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                .setSerializationInclusion(JsonInclude.Include.NON_NULL);
         String userHome = System.getProperty("user.home");
         this.projectsDir = Paths.get(userHome, ".rdbms2marklogic", "projects");
 

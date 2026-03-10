@@ -16,7 +16,8 @@ public class Project {
     OffsetDateTime created;
     OffsetDateTime modified;
     Map<String, DbSchema> schemas;
-    Map<String, Mapping> mappings;
+    ProjectMapping mapping;
     List<DiagramContainer> diagrams;
     ProjectSettings settings;
+    List<SyntheticJoin> syntheticJoins;
 }
