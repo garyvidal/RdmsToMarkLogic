@@ -5,6 +5,8 @@ import lombok.Data;
 
 @Data
 public class SchemaAnalysisRequest {
+    /** Optional: resolve connection from the repository by id (password never required from client). */
+    String connectionId;
     Connection connection;
     boolean includeTables;
     boolean includeColumns;

@@ -17,6 +17,7 @@ import java.util.Optional;
 public class ConnectionService {
 
     private final ConnectionRepository connectionRepository;
+    private final PasswordEncryptionService encryptionService;
 
     public SavedConnection saveConnection(SavedConnection savedConnection) {
         if (savedConnection.getName() == null || savedConnection.getName().trim().isEmpty()) {
@@ -60,9 +61,10 @@ public class ConnectionService {
     public ConnectionTestResult testConnection(Connection connection) {
         try {
             String jdbcUrl = buildJdbcUrl(connection);
+            String password = encryptionService.decrypt(connection.getPassword());
             var dataSource = DatabaseConnectionSourceBuilder
                     .builder(jdbcUrl)
-                    .withUserCredentials(new MultiUseUserCredentials(connection.getUserName(), connection.getPassword()))
+                    .withUserCredentials(new MultiUseUserCredentials(connection.getUserName(), password))
                     .build();
             try (java.sql.Connection conn = dataSource.get()) {
                 return new ConnectionTestResult(true, "Connection successful");

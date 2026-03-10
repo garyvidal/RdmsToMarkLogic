@@ -47,6 +47,7 @@ public class PasswordEncryptionService {
      */
     public String encrypt(String plaintext) {
         if (plaintext == null || plaintext.isEmpty()) return plaintext;
+        if (plaintext.startsWith(ENC_PREFIX)) return plaintext; // already encrypted
         try {
             byte[] iv = new byte[GCM_IV_LENGTH];
             new SecureRandom().nextBytes(iv);

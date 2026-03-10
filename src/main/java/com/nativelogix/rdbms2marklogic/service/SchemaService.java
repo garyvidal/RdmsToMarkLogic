@@ -3,6 +3,8 @@ package com.nativelogix.rdbms2marklogic.service;
 import com.nativelogix.rdbms2marklogic.model.Connection;
 import com.nativelogix.rdbms2marklogic.model.relational.*;
 import com.nativelogix.rdbms2marklogic.model.requests.SchemaAnalysisRequest;
+import com.nativelogix.rdbms2marklogic.repository.ConnectionRepository;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import schemacrawler.schema.*;
 import schemacrawler.schemacrawler.*;
@@ -15,7 +17,11 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
+@RequiredArgsConstructor
 public class SchemaService {
+
+    private final ConnectionRepository connectionRepository;
+    private final PasswordEncryptionService encryptionService;
 
     public DbDatabase analyzeSchema(SchemaAnalysisRequest request) {
         final LimitOptions limitOptions = LimitOptionsBuilder.builder().build();
@@ -28,7 +34,7 @@ public class SchemaService {
                 .withLimitOptions(limitOptions)
                 .withLoadOptions(loadOptions);
 
-        final DatabaseConnectionSource dataSource = getDataSource(request.getConnection());
+        final DatabaseConnectionSource dataSource = getDataSource(resolveConnection(request));
         final Catalog catalog = SchemaCrawlerUtility.getCatalog(dataSource, options);
 
         DbDatabase database = new DbDatabase();
@@ -62,6 +68,40 @@ public class SchemaService {
 
         database.setSchemas(schemas);
         return database;
+    }
+
+    /**
+     * Resolves the Connection to use.
+     * If connectionId is set, look up the stored (already-decrypted) credentials from the repository.
+     * Otherwise use the connection from the request, decrypting any ENC:-prefixed password.
+     */
+    private Connection resolveConnection(SchemaAnalysisRequest request) {
+        if (request.getConnectionId() != null && !request.getConnectionId().isBlank()) {
+            return connectionRepository.findAll().stream()
+                    .filter(sc -> request.getConnectionId().equals(sc.getId()))
+                    .findFirst()
+                    .orElseThrow(() -> new RuntimeException("Connection not found: " + request.getConnectionId()))
+                    .getConnection();
+        }
+        Connection conn = request.getConnection();
+        if (conn != null && conn.getPassword() != null) {
+            Connection decrypted = new Connection();
+            decrypted.setType(conn.getType());
+            decrypted.setUrl(conn.getUrl());
+            decrypted.setPort(conn.getPort());
+            decrypted.setDatabase(conn.getDatabase());
+            decrypted.setUserName(conn.getUserName());
+            decrypted.setPassword(encryptionService.decrypt(conn.getPassword()));
+            decrypted.setEnterUriManually(conn.getEnterUriManually());
+            decrypted.setJdbcUri(conn.getJdbcUri());
+            decrypted.setAuthentication(conn.getAuthentication());
+            decrypted.setIdentifier(conn.getIdentifier());
+            decrypted.setPdbName(conn.getPdbName());
+            decrypted.setUseSSL(conn.getUseSSL());
+            decrypted.setSslMode(conn.getSslMode());
+            return decrypted;
+        }
+        return conn;
     }
 
     private DatabaseConnectionSource getDataSource(Connection connection) {

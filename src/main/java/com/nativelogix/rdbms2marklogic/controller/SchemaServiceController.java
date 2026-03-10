@@ -2,6 +2,7 @@ package com.nativelogix.rdbms2marklogic.controller;
 
 import com.nativelogix.rdbms2marklogic.model.relational.DbDatabase;
 import com.nativelogix.rdbms2marklogic.model.requests.SchemaAnalysisRequest;
+import com.nativelogix.rdbms2marklogic.service.PasswordEncryptionService;
 import com.nativelogix.rdbms2marklogic.service.SchemaService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -15,10 +16,12 @@ import java.util.Map;
 public class SchemaServiceController {
 
     private final SchemaService schemaService;
+    private final PasswordEncryptionService encryptionService;
 
     @Autowired
-    public SchemaServiceController(SchemaService schemaService) {
+    public SchemaServiceController(SchemaService schemaService, PasswordEncryptionService encryptionService) {
         this.schemaService = schemaService;
+        this.encryptionService = encryptionService;
     }
 
     @GetMapping
@@ -32,6 +35,12 @@ public class SchemaServiceController {
         response.put("status", "API is running");
         response.put("timestamp", new java.util.Date().toString());
         return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/v1/encrypt")
+    public ResponseEntity<Map<String, String>> encrypt(@RequestBody Map<String, String> body) {
+        String encrypted = encryptionService.encrypt(body.get("value"));
+        return ResponseEntity.ok(Map.of("encrypted", encrypted));
     }
 
     @PostMapping("/v1/schemas")
