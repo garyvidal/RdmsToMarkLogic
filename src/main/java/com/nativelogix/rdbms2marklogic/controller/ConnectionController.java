@@ -4,51 +4,70 @@ import com.nativelogix.rdbms2marklogic.model.Connection;
 import com.nativelogix.rdbms2marklogic.model.ConnectionTestResult;
 import com.nativelogix.rdbms2marklogic.model.SavedConnection;
 import com.nativelogix.rdbms2marklogic.model.requests.SaveConnectionRequest;
-import com.nativelogix.rdbms2marklogic.repository.FileSystemConnectionRepository;
 import com.nativelogix.rdbms2marklogic.service.ConnectionService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/v1/connections")
 @CrossOrigin(origins = "http://localhost:5173", allowedHeaders = "*",
-        methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.DELETE, RequestMethod.OPTIONS})
+        methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT,
+                   RequestMethod.DELETE, RequestMethod.OPTIONS})
 public class ConnectionController {
 
     @Autowired
     private ConnectionService connectionService;
 
-    @Autowired
-    private FileSystemConnectionRepository connectionRepository;
-
+    /** Test a connection using credentials supplied directly in the request body. */
     @PostMapping("/test")
     public ResponseEntity<ConnectionTestResult> testConnection(@RequestBody Connection connection) {
         return ResponseEntity.ok(connectionService.testConnection(connection));
     }
 
+    /** Test a saved connection using its stored (decrypted) credentials — no password needed from client. */
+    @PostMapping("/{id}/test")
+    public ResponseEntity<ConnectionTestResult> testConnectionById(@PathVariable String id) {
+        return ResponseEntity.ok(connectionService.testConnectionById(id));
+    }
+
     @PostMapping
     public ResponseEntity<SavedConnection> saveConnection(@RequestBody SaveConnectionRequest request) {
-        Connection saved = connectionService.saveConnection(request.getName(), request.getConnection());
-        return ResponseEntity.ok(new SavedConnection(request.getName(), saved));
+        SavedConnection sc = new SavedConnection(
+                request.getId(),
+                request.getName(),
+                request.getEnvironment(),
+                request.getConnection()
+        );
+        return ResponseEntity.ok(masked(connectionService.saveConnection(sc)));
+    }
+
+    @PutMapping("/{name}")
+    public ResponseEntity<SavedConnection> updateConnection(
+            @PathVariable String name,
+            @RequestBody SaveConnectionRequest request) {
+        SavedConnection sc = new SavedConnection(
+                request.getId(),
+                request.getName(),
+                request.getEnvironment(),
+                request.getConnection()
+        );
+        return ResponseEntity.ok(masked(connectionService.updateConnection(name, sc)));
     }
 
     @GetMapping
     public ResponseEntity<List<SavedConnection>> getAllConnections() {
-        List<SavedConnection> connections = connectionRepository.findAllWithNames().entrySet()
-                .stream()
-                .map(e -> new SavedConnection(e.getKey(), e.getValue()))
-                .collect(Collectors.toList());
-        return ResponseEntity.ok(connections);
+        return ResponseEntity.ok(connectionService.getAllConnections().stream()
+                .map(this::masked)
+                .toList());
     }
 
     @GetMapping("/{name}")
     public ResponseEntity<SavedConnection> getConnection(@PathVariable String name) {
         return connectionService.getConnection(name)
-                .map(conn -> ResponseEntity.ok(new SavedConnection(name, conn)))
+                .map(sc -> ResponseEntity.ok(masked(sc)))
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
@@ -59,5 +78,31 @@ public class ConnectionController {
         }
         connectionService.deleteConnection(name);
         return ResponseEntity.noContent().build();
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /**
+     * Returns a copy of the SavedConnection with the password field cleared so
+     * that plaintext credentials are never sent to the frontend.
+     */
+    private SavedConnection masked(SavedConnection sc) {
+        if (sc == null || sc.getConnection() == null) return sc;
+        Connection c = sc.getConnection();
+        Connection safe = new Connection();
+        safe.setType(c.getType());
+        safe.setUrl(c.getUrl());
+        safe.setPort(c.getPort());
+        safe.setDatabase(c.getDatabase());
+        safe.setUserName(c.getUserName());
+        safe.setPassword(null); // never return the password to the client
+        safe.setEnterUriManually(c.getEnterUriManually());
+        safe.setJdbcUri(c.getJdbcUri());
+        safe.setAuthentication(c.getAuthentication());
+        safe.setIdentifier(c.getIdentifier());
+        safe.setPdbName(c.getPdbName());
+        safe.setUseSSL(c.getUseSSL());
+        safe.setSslMode(c.getSslMode());
+        return new SavedConnection(sc.getId(), sc.getName(), sc.getEnvironment(), safe);
     }
 }

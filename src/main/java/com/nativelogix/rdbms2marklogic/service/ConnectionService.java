@@ -2,6 +2,7 @@ package com.nativelogix.rdbms2marklogic.service;
 
 import com.nativelogix.rdbms2marklogic.model.Connection;
 import com.nativelogix.rdbms2marklogic.model.ConnectionTestResult;
+import com.nativelogix.rdbms2marklogic.model.SavedConnection;
 import com.nativelogix.rdbms2marklogic.repository.ConnectionRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -14,36 +15,53 @@ import java.util.Optional;
 @Service
 @RequiredArgsConstructor
 public class ConnectionService {
-    
+
     private final ConnectionRepository connectionRepository;
-    
-    public Connection saveConnection(String name, Connection connection) {
-        if (name == null || name.trim().isEmpty()) {
+
+    public SavedConnection saveConnection(SavedConnection savedConnection) {
+        if (savedConnection.getName() == null || savedConnection.getName().trim().isEmpty()) {
             throw new IllegalArgumentException("Connection name cannot be empty");
         }
-        return connectionRepository.save(name, connection);
+        return connectionRepository.save(savedConnection);
     }
-    
-    public Optional<Connection> getConnection(String name) {
+
+    public SavedConnection updateConnection(String originalName, SavedConnection updated) {
+        if (updated.getName() == null || updated.getName().trim().isEmpty()) {
+            throw new IllegalArgumentException("Connection name cannot be empty");
+        }
+        return connectionRepository.update(originalName, updated);
+    }
+
+    public Optional<SavedConnection> getConnection(String name) {
         return connectionRepository.findByName(name);
     }
-    
-    public List<Connection> getAllConnections() {
+
+    public List<SavedConnection> getAllConnections() {
         return connectionRepository.findAll();
     }
-    
+
     public void deleteConnection(String name) {
         connectionRepository.delete(name);
     }
-    
+
     public boolean connectionExists(String name) {
         return connectionRepository.exists(name);
     }
 
+    /** Tests a connection using its stored (decrypted) credentials, looked up by id. */
+    public ConnectionTestResult testConnectionById(String id) {
+        SavedConnection sc = getAllConnections().stream()
+                .filter(c -> id.equals(c.getId()))
+                .findFirst()
+                .orElseThrow(() -> new RuntimeException("Connection not found: " + id));
+        return testConnection(sc.getConnection());
+    }
+
     public ConnectionTestResult testConnection(Connection connection) {
         try {
+            String jdbcUrl = buildJdbcUrl(connection);
             var dataSource = DatabaseConnectionSourceBuilder
-                    .builder(buildJdbcUrl(connection))
+                    .builder(jdbcUrl)
                     .withUserCredentials(new MultiUseUserCredentials(connection.getUserName(), connection.getPassword()))
                     .build();
             try (java.sql.Connection conn = dataSource.get()) {
@@ -55,14 +73,55 @@ public class ConnectionService {
     }
 
     private String buildJdbcUrl(Connection connection) {
+        // If the user entered a JDBC URI directly, use it as-is
+        if (Boolean.TRUE.equals(connection.getEnterUriManually())
+                && connection.getJdbcUri() != null
+                && !connection.getJdbcUri().isBlank()) {
+            return connection.getJdbcUri();
+        }
+
         String host = connection.getUrl();
-        int port = connection.getPort();
+        int port = connection.getPort() != null ? connection.getPort() : 0;
         String database = connection.getDatabase();
+
         return switch (connection.getType()) {
             case MySql -> String.format("jdbc:mysql://%s:%d/%s", host, port, database);
-            case SqlServer -> String.format("jdbc:sqlserver://%s:%d;databaseName=%s", host, port, database);
-            case Oracle -> String.format("jdbc:oracle:thin:@%s:%d:%s", host, port, database);
-            default -> String.format("jdbc:postgresql://%s:%d/%s", host, port, database);
+
+            case SqlServer -> {
+                StringBuilder url = new StringBuilder(
+                        String.format("jdbc:sqlserver://%s:%d;databaseName=%s", host, port, database));
+                if ("Windows".equals(connection.getAuthentication())) {
+                    url.append(";integratedSecurity=true");
+                }
+                yield url.toString();
+            }
+
+            case Oracle -> {
+                String identifier = connection.getIdentifier();
+                if ("SID".equals(identifier)) {
+                    yield String.format("jdbc:oracle:thin:@%s:%d:%s", host, port, database);
+                } else {
+                    // ServiceName (default)
+                    yield String.format("jdbc:oracle:thin:@//%s:%d/%s", host, port, database);
+                }
+            }
+
+            default -> { // Postgres
+                StringBuilder url = new StringBuilder(
+                        String.format("jdbc:postgresql://%s:%d/%s", host, port, database));
+                if (Boolean.TRUE.equals(connection.getUseSSL())) {
+                    url.append("?ssl=true");
+                    if (connection.getSslMode() != null) {
+                        String sslMode = switch (connection.getSslMode()) {
+                            case "VerifyCA" -> "verify-ca";
+                            case "VerifyFull" -> "verify-full";
+                            default -> connection.getSslMode().toLowerCase();
+                        };
+                        url.append("&sslmode=").append(sslMode);
+                    }
+                }
+                yield url.toString();
+            }
         };
     }
 }

@@ -1,13 +1,16 @@
 package com.nativelogix.rdbms2marklogic.repository;
 
-import com.nativelogix.rdbms2marklogic.model.Connection;
+import com.nativelogix.rdbms2marklogic.model.SavedConnection;
+
 import java.util.List;
 import java.util.Optional;
 
 public interface ConnectionRepository {
-    Connection save(String name, Connection connection);
-    Optional<Connection> findByName(String name);
-    List<Connection> findAll();
+    SavedConnection save(SavedConnection savedConnection);
+    /** Update an existing connection by originalName; keeps existing password if the new one is blank. */
+    SavedConnection update(String originalName, SavedConnection updated);
+    Optional<SavedConnection> findByName(String name);
+    List<SavedConnection> findAll();
     void delete(String name);
     boolean exists(String name);
 }
