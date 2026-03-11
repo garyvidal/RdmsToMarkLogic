@@ -39,14 +39,17 @@ public class FileSystemConnectionRepository implements ConnectionRepository {
     }
 
     /**
-     * Saves a connection with the password encrypted at rest.
-     * The returned object retains the plaintext password for in-memory use.
+     * Saves a connection using {id}.json as the filename.
+     * The password is encrypted at rest; the returned object retains plaintext for in-memory use.
      */
     @Override
     public SavedConnection save(SavedConnection savedConnection) {
         try {
+            if (savedConnection.getId() == null || savedConnection.getId().isBlank()) {
+                savedConnection.setId(UUID.randomUUID().toString());
+            }
             SavedConnection toWrite = withEncryptedPassword(savedConnection);
-            Path filePath = connectionsDir.resolve(savedConnection.getName() + ".json");
+            Path filePath = connectionsDir.resolve(savedConnection.getId() + ".json");
             objectMapper.writeValue(filePath.toFile(), toWrite);
             return savedConnection; // return original (plaintext password in memory)
         } catch (IOException e) {
@@ -55,9 +58,8 @@ public class FileSystemConnectionRepository implements ConnectionRepository {
     }
 
     /**
-     * Updates an existing connection. If the new password is blank, the stored
-     * password is preserved so the user doesn't have to re-enter it on every edit.
-     * Handles name changes by deleting the old file.
+     * Updates an existing connection. If the new password is blank, the stored password is preserved.
+     * Since files are keyed by id, renames no longer require a file delete/recreate.
      */
     @Override
     public SavedConnection update(String originalName, SavedConnection updated) {
@@ -67,24 +69,14 @@ public class FileSystemConnectionRepository implements ConnectionRepository {
             findByName(originalName).ifPresent(existing ->
                     updated.getConnection().setPassword(existing.getConnection().getPassword()));
         }
-        // Delete old file if the connection was renamed
-        if (!originalName.equals(updated.getName())) {
-            delete(originalName);
-        }
         return save(updated);
     }
 
     @Override
     public Optional<SavedConnection> findByName(String name) {
-        Path filePath = connectionsDir.resolve(name + ".json");
-        if (!Files.exists(filePath)) {
-            return Optional.empty();
-        }
-        try {
-            return Optional.of(readAndMigrate(name, filePath.toFile()));
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to read connection: " + e.getMessage(), e);
-        }
+        return findAll().stream()
+                .filter(sc -> name.equals(sc.getName()))
+                .findFirst();
     }
 
     @Override
@@ -93,13 +85,16 @@ public class FileSystemConnectionRepository implements ConnectionRepository {
             if (!Files.exists(connectionsDir)) {
                 return new ArrayList<>();
             }
-            return Files.list(connectionsDir)
+            // Collect paths first to avoid ConcurrentModificationException during migration
+            List<Path> paths = Files.list(connectionsDir)
                     .filter(path -> path.toString().endsWith(".json"))
+                    .collect(Collectors.toList());
+            return paths.stream()
                     .map(path -> {
-                        String filename = path.getFileName().toString();
-                        String name = filename.substring(0, filename.length() - 5);
+                        String filenameStem = path.getFileName().toString();
+                        filenameStem = filenameStem.substring(0, filenameStem.length() - 5);
                         try {
-                            return readAndMigrate(name, path.toFile());
+                            return readAndMigrate(filenameStem, path.toFile());
                         } catch (IOException e) {
                             throw new RuntimeException("Failed to read connection file: " + path, e);
                         }
@@ -112,29 +107,34 @@ public class FileSystemConnectionRepository implements ConnectionRepository {
 
     @Override
     public void delete(String name) {
-        try {
-            Path filePath = connectionsDir.resolve(name + ".json");
-            Files.deleteIfExists(filePath);
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to delete connection: " + e.getMessage(), e);
-        }
+        findAll().stream()
+                .filter(sc -> name.equals(sc.getName()))
+                .findFirst()
+                .ifPresent(sc -> {
+                    try {
+                        Files.deleteIfExists(connectionsDir.resolve(sc.getId() + ".json"));
+                    } catch (IOException e) {
+                        throw new RuntimeException("Failed to delete connection: " + e.getMessage(), e);
+                    }
+                });
     }
 
     @Override
     public boolean exists(String name) {
-        return Files.exists(connectionsDir.resolve(name + ".json"));
+        return findAll().stream().anyMatch(sc -> name.equals(sc.getName()));
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
     /**
-     * Reads a connection file and returns a SavedConnection with the password
-     * decrypted in memory. Migrates legacy formats transparently:
+     * Reads a connection file and returns a SavedConnection with the password decrypted in memory.
+     * Migrates legacy formats transparently:
      *   - bare Connection object → wrapped in SavedConnection
      *   - missing id → assigned and persisted
      *   - plaintext password → re-saved with encryption
+     *   - name-based filename ({name}.json) → re-saved as {id}.json, old file deleted
      */
-    private SavedConnection readAndMigrate(String name, File file) throws IOException {
+    private SavedConnection readAndMigrate(String filenameStem, File file) throws IOException {
         JsonNode root = objectMapper.readTree(file);
         SavedConnection sc;
 
@@ -143,7 +143,7 @@ public class FileSystemConnectionRepository implements ConnectionRepository {
         } else {
             // Old format — bare Connection object; wrap it
             Connection connection = objectMapper.treeToValue(root, Connection.class);
-            sc = new SavedConnection(UUID.randomUUID().toString(), name, null, connection);
+            sc = new SavedConnection(UUID.randomUUID().toString(), filenameStem, null, connection);
         }
 
         if (sc.getId() == null || sc.getId().isBlank()) {
@@ -159,10 +159,16 @@ public class FileSystemConnectionRepository implements ConnectionRepository {
             sc.getConnection().setPassword(encryptionService.decrypt(storedPassword));
         }
 
-        // Persist migration: re-save if format changed (this encrypts any plaintext password)
+        // Detect legacy name-based filename: stem is the connection name, not its id
+        boolean isLegacyFilename = !filenameStem.equals(sc.getId());
+
+        // Persist migration: re-save as {id}.json if anything needs updating
         boolean formatMigrated = !root.has("connection") || (sc.getId() != null && !root.has("id"));
-        if (isLegacyPlaintext || formatMigrated) {
-            save(sc);
+        if (isLegacyPlaintext || formatMigrated || isLegacyFilename) {
+            save(sc); // writes {id}.json
+            if (isLegacyFilename) {
+                Files.deleteIfExists(file.toPath()); // remove old {name}.json
+            }
         }
 
         return sc;
