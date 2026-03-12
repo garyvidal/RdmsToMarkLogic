@@ -14,7 +14,7 @@ import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
-public class ConnectionService {
+public class JDBCConnectionService {
 
     private final ConnectionRepository connectionRepository;
     private final PasswordEncryptionService encryptionService;
@@ -59,19 +59,25 @@ public class ConnectionService {
     }
 
     public ConnectionTestResult testConnection(Connection connection) {
-        try {
-            String jdbcUrl = buildJdbcUrl(connection);
-            String password = encryptionService.decrypt(connection.getPassword());
-            var dataSource = DatabaseConnectionSourceBuilder
-                    .builder(jdbcUrl)
-                    .withUserCredentials(new MultiUseUserCredentials(connection.getUserName(), password))
-                    .build();
-            try (java.sql.Connection conn = dataSource.get()) {
-                return new ConnectionTestResult(true, "Connection successful");
-            }
+        try (java.sql.Connection conn = openJdbcConnection(connection)) {
+            return new ConnectionTestResult(true, "Connection successful");
         } catch (Exception e) {
             return new ConnectionTestResult(false, e.getMessage() != null ? e.getMessage() : "Connection failed");
         }
+    }
+
+    /**
+     * Opens and returns a live {@link java.sql.Connection} for the given connection config.
+     * Callers are responsible for closing it (use try-with-resources).
+     */
+    public java.sql.Connection openJdbcConnection(Connection connection) throws Exception {
+        String jdbcUrl = buildJdbcUrl(connection);
+        String password = encryptionService.decrypt(connection.getPassword());
+        var dataSource = DatabaseConnectionSourceBuilder
+                .builder(jdbcUrl)
+                .withUserCredentials(new MultiUseUserCredentials(connection.getUserName(), password))
+                .build();
+        return dataSource.get();
     }
 
     private String buildJdbcUrl(Connection connection) {

@@ -4,7 +4,7 @@ import com.nativelogix.rdbms2marklogic.model.Connection;
 import com.nativelogix.rdbms2marklogic.model.ConnectionTestResult;
 import com.nativelogix.rdbms2marklogic.model.SavedConnection;
 import com.nativelogix.rdbms2marklogic.model.requests.SaveConnectionRequest;
-import com.nativelogix.rdbms2marklogic.service.ConnectionService;
+import com.nativelogix.rdbms2marklogic.service.JDBCConnectionService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -19,18 +19,18 @@ import java.util.List;
 public class ConnectionController {
 
     @Autowired
-    private ConnectionService connectionService;
+    private JDBCConnectionService JDBCConnectionService;
 
     /** Test a connection using credentials supplied directly in the request body. */
     @PostMapping("/test")
     public ResponseEntity<ConnectionTestResult> testConnection(@RequestBody Connection connection) {
-        return ResponseEntity.ok(connectionService.testConnection(connection));
+        return ResponseEntity.ok(JDBCConnectionService.testConnection(connection));
     }
 
     /** Test a saved connection using its stored (decrypted) credentials — no password needed from client. */
     @PostMapping("/{id}/test")
     public ResponseEntity<ConnectionTestResult> testConnectionById(@PathVariable String id) {
-        return ResponseEntity.ok(connectionService.testConnectionById(id));
+        return ResponseEntity.ok(JDBCConnectionService.testConnectionById(id));
     }
 
     @PostMapping
@@ -41,7 +41,7 @@ public class ConnectionController {
                 request.getEnvironment(),
                 request.getConnection()
         );
-        return ResponseEntity.ok(masked(connectionService.saveConnection(sc)));
+        return ResponseEntity.ok(masked(JDBCConnectionService.saveConnection(sc)));
     }
 
     @PutMapping("/{name}")
@@ -54,29 +54,29 @@ public class ConnectionController {
                 request.getEnvironment(),
                 request.getConnection()
         );
-        return ResponseEntity.ok(masked(connectionService.updateConnection(name, sc)));
+        return ResponseEntity.ok(masked(JDBCConnectionService.updateConnection(name, sc)));
     }
 
     @GetMapping
     public ResponseEntity<List<SavedConnection>> getAllConnections() {
-        return ResponseEntity.ok(connectionService.getAllConnections().stream()
+        return ResponseEntity.ok(JDBCConnectionService.getAllConnections().stream()
                 .map(this::masked)
                 .toList());
     }
 
     @GetMapping("/{name}")
     public ResponseEntity<SavedConnection> getConnection(@PathVariable String name) {
-        return connectionService.getConnection(name)
+        return JDBCConnectionService.getConnection(name)
                 .map(sc -> ResponseEntity.ok(masked(sc)))
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
     @DeleteMapping("/{name}")
     public ResponseEntity<Void> deleteConnection(@PathVariable String name) {
-        if (!connectionService.connectionExists(name)) {
+        if (!JDBCConnectionService.connectionExists(name)) {
             return ResponseEntity.notFound().build();
         }
-        connectionService.deleteConnection(name);
+        JDBCConnectionService.deleteConnection(name);
         return ResponseEntity.noContent().build();
     }
 
