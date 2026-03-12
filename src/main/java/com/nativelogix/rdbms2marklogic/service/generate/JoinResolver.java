@@ -1,6 +1,7 @@
 package com.nativelogix.rdbms2marklogic.service.generate;
 
 import com.nativelogix.rdbms2marklogic.model.project.JoinCondition;
+import com.nativelogix.rdbms2marklogic.model.project.JsonTableMapping;
 import com.nativelogix.rdbms2marklogic.model.project.Project;
 import com.nativelogix.rdbms2marklogic.model.project.SyntheticJoin;
 import com.nativelogix.rdbms2marklogic.model.project.XmlTableMapping;
@@ -26,58 +27,83 @@ public class JoinResolver {
     public record JoinPath(String parentColumn, String childColumn) {}
 
     /**
+     * A format-agnostic reference to a mapped table, used so that both XML and JSON
+     * generation can share the same join resolution logic.
+     */
+    public record SourceTableRef(String sourceSchema, String sourceTable, String id) {
+        public static SourceTableRef of(XmlTableMapping m) {
+            return new SourceTableRef(m.getSourceSchema(), m.getSourceTable(), m.getId());
+        }
+        public static SourceTableRef of(JsonTableMapping m) {
+            return new SourceTableRef(m.getSourceSchema(), m.getSourceTable(), m.getId());
+        }
+    }
+
+    // ── XML convenience overload (unchanged API) ──────────────────────────────
+
+    /**
      * Resolve how {@code parentMapping}'s table connects to {@code childMapping}'s table.
      *
      * @throws IllegalArgumentException if no join path can be found
      */
     public JoinPath resolve(XmlTableMapping parentMapping, XmlTableMapping childMapping, Project project) {
+        return resolve(SourceTableRef.of(parentMapping), SourceTableRef.of(childMapping), project);
+    }
+
+    // ── JSON overload ─────────────────────────────────────────────────────────
+
+    public JoinPath resolve(JsonTableMapping parentMapping, JsonTableMapping childMapping, Project project) {
+        return resolve(SourceTableRef.of(parentMapping), SourceTableRef.of(childMapping), project);
+    }
+
+    // ── Core resolution (format-agnostic) ────────────────────────────────────
+
+    public JoinPath resolve(SourceTableRef parent, SourceTableRef child, Project project) {
         // 1. Try FK relationships stored on the parent table
-        JoinPath fkPath = resolveViaForeignKey(parentMapping, childMapping, project);
+        JoinPath fkPath = resolveViaForeignKey(parent, child, project);
         if (fkPath != null) return fkPath;
 
         // 2. Try in reverse: FK on child table pointing back to parent
-        JoinPath reverseFkPath = resolveViaForeignKeyReverse(parentMapping, childMapping, project);
+        JoinPath reverseFkPath = resolveViaForeignKeyReverse(parent, child, project);
         if (reverseFkPath != null) return reverseFkPath;
 
         // 3. Try user-defined synthetic joins
-        JoinPath syntheticPath = resolveViaSyntheticJoin(parentMapping, childMapping, project);
+        JoinPath syntheticPath = resolveViaSyntheticJoin(parent, child, project);
         if (syntheticPath != null) return syntheticPath;
 
         throw new IllegalArgumentException(
                 "No join path found between '%s.%s' and '%s.%s'. Add a synthetic join or ensure a foreign key exists."
-                        .formatted(parentMapping.getSourceSchema(), parentMapping.getSourceTable(),
-                                   childMapping.getSourceSchema(), childMapping.getSourceTable()));
+                        .formatted(parent.sourceSchema(), parent.sourceTable(),
+                                   child.sourceSchema(), child.sourceTable()));
     }
 
-    /** Check FK relationships defined on the parent table pointing to the child table. */
-    private JoinPath resolveViaForeignKey(XmlTableMapping parent, XmlTableMapping child, Project project) {
-        DbTable parentTable = getDbTable(project, parent.getSourceSchema(), parent.getSourceTable());
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    private JoinPath resolveViaForeignKey(SourceTableRef parent, SourceTableRef child, Project project) {
+        DbTable parentTable = getDbTable(project, parent.sourceSchema(), parent.sourceTable());
         if (parentTable == null || parentTable.getRelationships() == null) return null;
 
         for (DbRelationship rel : parentTable.getRelationships()) {
-            if (child.getSourceTable().equalsIgnoreCase(rel.getToTable())) {
+            if (child.sourceTable().equalsIgnoreCase(rel.getToTable())) {
                 return new JoinPath(rel.getFromColumn(), rel.getToColumn());
             }
         }
         return null;
     }
 
-    /** Check FK relationships on the child table pointing back to the parent table. */
-    private JoinPath resolveViaForeignKeyReverse(XmlTableMapping parent, XmlTableMapping child, Project project) {
-        DbTable childTable = getDbTable(project, child.getSourceSchema(), child.getSourceTable());
+    private JoinPath resolveViaForeignKeyReverse(SourceTableRef parent, SourceTableRef child, Project project) {
+        DbTable childTable = getDbTable(project, child.sourceSchema(), child.sourceTable());
         if (childTable == null || childTable.getRelationships() == null) return null;
 
         for (DbRelationship rel : childTable.getRelationships()) {
-            if (parent.getSourceTable().equalsIgnoreCase(rel.getToTable())) {
-                // Relationship is on the child pointing to parent: child.fromColumn → parent.toColumn
+            if (parent.sourceTable().equalsIgnoreCase(rel.getToTable())) {
                 return new JoinPath(rel.getToColumn(), rel.getFromColumn());
             }
         }
         return null;
     }
 
-    /** Check user-defined synthetic joins in both directions. */
-    private JoinPath resolveViaSyntheticJoin(XmlTableMapping parent, XmlTableMapping child, Project project) {
+    private JoinPath resolveViaSyntheticJoin(SourceTableRef parent, SourceTableRef child, Project project) {
         if (project.getSyntheticJoins() == null) return null;
 
         for (SyntheticJoin sj : project.getSyntheticJoins()) {
@@ -101,9 +127,9 @@ public class JoinResolver {
         return null;
     }
 
-    private boolean matches(String schema, String table, XmlTableMapping mapping) {
-        return table.equalsIgnoreCase(mapping.getSourceTable()) &&
-               (schema == null || schema.equalsIgnoreCase(mapping.getSourceSchema()));
+    private boolean matches(String schema, String table, SourceTableRef ref) {
+        return table.equalsIgnoreCase(ref.sourceTable()) &&
+               (schema == null || schema.equalsIgnoreCase(ref.sourceSchema()));
     }
 
     private DbTable getDbTable(Project project, String schemaName, String tableName) {
